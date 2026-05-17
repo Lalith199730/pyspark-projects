@@ -1,0 +1,64 @@
+import pandas as pd
+
+data = {
+    "order_id": [1,2,3,4,5,6,7,8,9,10],
+    "product": ["Laptop","Phone","Tablet","Laptop","Phone","Headphones","Tablet","Phone","Laptop","Headphones"],
+    "category": ["Electronics","Electronics","Electronics","Electronics","Electronics","Accessories","Electronics","Electronics","Electronics","Accessories"],
+    "quantity": [2,1,3,1,2,5,0,1,2,3],
+    "price": [1200,800,450,1200,800,150,450,800,1200,150],
+    "region": ["North","South","East","West","North","South","East","West","North","South"]
+}
+
+pd.DataFrame(data).to_csv("sales.csv", index=False)
+print("Sales data created!")
+
+
+
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, when, sum, round
+
+spark = SparkSession.builder \
+    .appName("SalesPipeline") \
+    .getOrCreate()
+
+df = spark.read.csv("sales.csv",
+                     header=True,
+                     inferSchema=True)
+
+df.show()
+print("Total orders:", df.count())
+
+# Clean and transform
+df_clean = df.filter(col("quantity") > 0) \
+             .withColumn("total_revenue", col("quantity") * col("price"))
+
+print("Data is cleaned")
+df_clean.show()
+print("Total rows after cleaning:", df_clean.count())
+
+df_products = df_clean.groupBy('product')\
+                    .agg(sum('total_revenue').alias('revenue'))\
+                    .orderBy(col('revenue').desc())
+
+df_products.show()
+
+df_region = df_clean.groupBy("region") \
+                    .agg(sum("total_revenue").alias("regional_revenue")) \
+                    .orderBy(col("regional_revenue").desc())
+
+df_region.show()
+
+# Write product summary
+df_products.write.mode("overwrite") \
+                 .parquet("output/product_revenue/")
+
+# Write region summary  
+df_region.write.mode("overwrite") \
+               .parquet("output/region_revenue/")
+
+# Write clean full dataset partitioned by category
+df_clean.write.mode("overwrite") \
+              .partitionBy("category") \
+              .parquet("output/sales_clean/")
+
+print("Pipeline complete!")
